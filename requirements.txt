@@ -1,0 +1,5 @@
+aiogram>=3.17
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pymongo>=4.13
+python-dotenv>=1.0
