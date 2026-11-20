@@ -27,11 +27,14 @@ def _price(plan: str) -> int:
 async def _invoice_link(bot: Bot, uid: int, plan: str) -> str:
     name = PLAN_NAMES[plan]
     if plan == "pro":
-        desc = f"Up to {settings.paid_rule_limit} auto-reply rules and unlimited replies. Renews monthly."
+        desc = (
+            f"Up to {settings.paid_rule_limit} auto-reply rules, unlimited replies, "
+            "and no 'Auto-replied via @Cuezabot' watermark. Renews monthly."
+        )
     else:
         desc = (
             f"Up to {settings.growth_rule_limit} rules, unlimited replies, automatic follow-ups "
-            "and owner reminders. Renews monthly."
+            "and owner reminders, with no 'Auto-replied via @Cuezabot' watermark. Renews monthly."
         )
     return await bot.create_invoice_link(
         title=f"{name} plan — 1 month",
@@ -53,11 +56,13 @@ async def render_subscription(bot: Bot, tg_user):
 
     pro_info = (
         f"⭐ <b>Pro — {settings.stars_price} Stars / month</b>\n"
-        f"• Up to {settings.paid_rule_limit} rules\n• Unlimited auto-replies"
+        f"• Up to {settings.paid_rule_limit} rules\n"
+        "• Unlimited auto-replies\n• No “Auto-replied via @Cuezabot” watermark"
     )
     growth_info = (
         f"🚀 <b>Growth — {settings.growth_price} Stars / month</b>\n"
-        f"• Up to {settings.growth_rule_limit} rules\n• Unlimited auto-replies\n"
+        f"• Up to {settings.growth_rule_limit} rules\n"
+        "• Unlimited auto-replies\n• No “Auto-replied via @Cuezabot” watermark\n"
         "• Automatic follow-ups + owner reminders"
     )
 
@@ -89,7 +94,8 @@ async def render_subscription(bot: Bot, tg_user):
         f"{ended}"
         "<b>Free plan</b> (current)\n"
         f"• {settings.free_rule_limit} active rules\n"
-        f"• {settings.free_reply_limit} auto-replies / month\n\n"
+        f"• {settings.free_reply_limit} auto-replies / month\n"
+        "• Auto-replies include the “Auto-replied via @Cuezabot” watermark\n\n"
         f"{pro_info}\n\n{growth_info}\n\n"
         f"📋 Rules: {rules_used}/{settings.free_rule_limit}\n"
         f"💬 Replies this month: {replies_used}/{settings.free_reply_limit}"

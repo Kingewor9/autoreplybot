@@ -132,7 +132,13 @@ async def on_business_message(message: Message, bot: Bot):
         return
 
     try:
-        await send_rule_reply(bot, chat_id, rule, business_connection_id=conn_id)
+        await send_rule_reply(
+            bot,
+            chat_id,
+            rule,
+            business_connection_id=conn_id,
+            watermark=not services.is_paid(owner),
+        )
     except TelegramAPIError as e:
         log.warning("Auto-reply failed for owner %s: %s", owner_id, e)
         await services.refund_reply(owner_id)
