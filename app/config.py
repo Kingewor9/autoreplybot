@@ -24,6 +24,7 @@ def _int(name: str, default: int) -> int:
 @dataclass(frozen=True)
 class Settings:
     bot_token: str
+    admin_telegram_id: int
     mongodb_uri: str
     mongodb_db: str
     webhook_base_url: str
@@ -52,6 +53,7 @@ def load_settings() -> Settings:
     base_url = os.getenv("WEBHOOK_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or ""
     return Settings(
         bot_token=token,
+        admin_telegram_id=_int("ADMIN_TELEGRAM_ID", 0),
         mongodb_uri=_required("MONGODB_URI"),
         mongodb_db=os.getenv("MONGODB_DB", "autoreply_bot"),
         webhook_base_url=base_url.rstrip("/"),
