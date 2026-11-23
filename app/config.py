@@ -46,6 +46,9 @@ class Settings:
     notify_max_minutes: int
     worker_poll_seconds: int
     echo_guard_seconds: int
+    paystack_secret_key: str
+    pro_naira_price: int
+    growth_naira_price: int
 
 
 def load_settings() -> Settings:
@@ -77,6 +80,9 @@ def load_settings() -> Settings:
         notify_max_minutes=_int("NOTIFY_MAX_MINUTES", 7 * 24 * 60),
         worker_poll_seconds=_int("WORKER_POLL_SECONDS", 20),
         echo_guard_seconds=_int("ECHO_GUARD_SECONDS", 10),
+        paystack_secret_key=os.getenv("PAYSTACK_SECRET_KEY", "").strip(),
+        pro_naira_price=_int("PRO_NAIRA_PRICE", 7500),
+        growth_naira_price=_int("GROWTH_NAIRA_PRICE", 15000),
     )
 
 

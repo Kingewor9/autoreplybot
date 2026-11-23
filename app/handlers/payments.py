@@ -11,6 +11,7 @@ from app import keyboards as kb
 from app import services
 from app.config import PLAN_NAMES, PLAN_RANK, settings
 from app.db import cols
+from app.paystack import PaystackError, initialize_transaction
 from app.ui import show
 
 log = logging.getLogger(__name__)
@@ -18,6 +19,26 @@ router = Router()
 
 SUBSCRIPTION_PERIOD = 2_592_000  # Telegram requires exactly 30 days (in seconds)
 PAID_PLANS = ("pro", "growth")
+
+
+def _naira_price(plan: str) -> int:
+    return settings.pro_naira_price if plan == "pro" else settings.growth_naira_price
+
+
+def _paystack_enabled() -> bool:
+    return bool(settings.paystack_secret_key and settings.webhook_base_url)
+
+
+def _paystack_items(plans: tuple[str, ...]) -> list[tuple[str, str]]:
+    if not _paystack_enabled():
+        return []
+    return [
+        (
+            f"🇳🇬 {PLAN_NAMES[plan]} · ₦{_naira_price(plan):,}",
+            f"pay:{plan}:ngn",
+        )
+        for plan in plans
+    ]
 
 
 def _price(plan: str) -> int:
@@ -54,13 +75,23 @@ async def render_subscription(bot: Bot, tg_user):
     replies_used = await services.get_usage(uid)
     until = user.get("premium_until")
 
+    pro_price = (
+        f"{settings.stars_price} Stars or ₦{settings.pro_naira_price:,}"
+        if _paystack_enabled()
+        else f"{settings.stars_price} Stars"
+    )
+    growth_price = (
+        f"{settings.growth_price} Stars or ₦{settings.growth_naira_price:,}"
+        if _paystack_enabled()
+        else f"{settings.growth_price} Stars"
+    )
     pro_info = (
-        f"⭐ <b>Pro — {settings.stars_price} Stars / month</b>\n"
+        f"⭐ <b>Pro — {pro_price} / month</b>\n"
         f"• Up to {settings.paid_rule_limit} rules\n"
         "• Unlimited auto-replies\n• No “Auto-replied via @Cuezabot” watermark"
     )
     growth_info = (
-        f"🚀 <b>Growth — {settings.growth_price} Stars / month</b>\n"
+        f"🚀 <b>Growth — {growth_price} / month</b>\n"
         f"• Up to {settings.growth_rule_limit} rules\n"
         "• Unlimited auto-replies\n• No “Auto-replied via @Cuezabot” watermark\n"
         "• Automatic follow-ups + owner reminders"
@@ -70,8 +101,14 @@ async def render_subscription(bot: Bot, tg_user):
         text = (
             "💳 <b>Subscription</b>\n\n"
             f"✅ <b>You're on {PLAN_NAMES[plan]}</b>\n"
-            f"Active until <b>{until:%d %b %Y}</b> — renews automatically via Telegram Stars.\n"
-            "To cancel renewal: Telegram <b>Settings → My Stars → Subscriptions</b>.\n\n"
+            f"Active until <b>{until:%d %b %Y}</b>."
+            + (
+                " Paystack payments last 30 days and must be renewed manually.\n"
+                if user.get("payment_provider") == "paystack"
+                else " Renews automatically via Telegram Stars. To cancel renewal: Telegram "
+                "<b>Settings → My Stars → Subscriptions</b>.\n"
+            )
+            + "\n"
             f"📋 Rules: {rules_used}/{services.rule_limit(user)}\n"
             f"💬 Replies this month: {replies_used} (unlimited)"
         )
@@ -81,7 +118,25 @@ async def render_subscription(bot: Bot, tg_user):
                 "your Pro renewal.</i>"
             )
             link = await _invoice_link(bot, uid, "growth")
-            return text, kb.subscribe_kb([(f"🚀 Upgrade to Growth · {settings.growth_price} Stars / month", link)])
+            stars_items = [
+                (f"🚀 Growth · {settings.growth_price} Stars / month", link)
+            ]
+            paystack_items = _paystack_items(("growth",))
+            if user.get("payment_provider") == "paystack":
+                pro_link = await _invoice_link(bot, uid, "pro")
+                stars_items.append((f"⭐ Renew Pro · {settings.stars_price} Stars", pro_link))
+                paystack_items = _paystack_items(("pro", "growth"))
+            return text, kb.subscribe_kb(stars_items, paystack_items)
+        if user.get("payment_provider") == "paystack":
+            link = await _invoice_link(bot, uid, "growth")
+            return text, kb.subscribe_kb(
+                [(f"🚀 Renew Growth · {settings.growth_price} Stars", link)],
+                _paystack_items(("growth",)),
+            )
+        paystack_items = _paystack_items(("growth",))
+        if paystack_items:
+            text += "\n\nPaying with Paystack adds 30 days and cancels your Stars renewal."
+            return text, kb.subscribe_kb([], paystack_items)
         return text, kb.subscribe_kb([])
 
     ended = (
@@ -100,13 +155,16 @@ async def render_subscription(bot: Bot, tg_user):
         f"📋 Rules: {rules_used}/{settings.free_rule_limit}\n"
         f"💬 Replies this month: {replies_used}/{settings.free_reply_limit}"
     )
+    if _paystack_enabled():
+        text += "\n\n🇳🇬 Paystack is a one-time payment for 30 days; renew manually."
     pro_link = await _invoice_link(bot, uid, "pro")
     growth_link = await _invoice_link(bot, uid, "growth")
     return text, kb.subscribe_kb(
         [
             (f"⭐ Pro · {settings.stars_price} Stars / month", pro_link),
             (f"🚀 Growth · {settings.growth_price} Stars / month", growth_link),
-        ]
+        ],
+        _paystack_items(("pro", "growth")),
     )
 
 
@@ -121,6 +179,41 @@ async def cb_subscription(cb: CallbackQuery, bot: Bot):
 async def cmd_subscription(message: Message, bot: Bot):
     text, markup = await render_subscription(bot, message.from_user)
     await message.answer(text, reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("pay:"))
+async def cb_paystack_checkout(cb: CallbackQuery, bot: Bot):
+    parts = (cb.data or "").split(":")
+    if len(parts) != 3 or parts[1] not in PAID_PLANS or parts[2] != "ngn":
+        await cb.answer("Invalid payment option.", show_alert=True)
+        return
+    if not _paystack_enabled():
+        await cb.answer(
+            "Naira payments are not configured yet. Please use Telegram Stars.",
+            show_alert=True,
+        )
+        return
+
+    await cb.answer()
+    plan = parts[1]
+    try:
+        checkout_url = await initialize_transaction(cb.from_user.id, plan)
+    except PaystackError:
+        log.exception("Could not initialize Paystack transaction for user %s", cb.from_user.id)
+        await bot.send_message(
+            cb.from_user.id,
+            "Paystack checkout is temporarily unavailable. Please try again or use Telegram Stars.",
+        )
+        return
+
+    await bot.send_message(
+        cb.from_user.id,
+        f"Pay ₦{_naira_price(plan):,} for one month of {PLAN_NAMES[plan]} access. "
+        "Your subscription will activate after Paystack confirms payment.",
+        reply_markup=kb.subscribe_kb(
+            [(f"🇳🇬 Pay ₦{_naira_price(plan):,} with Paystack", checkout_url)]
+        ),
+    )
 
 
 @router.message(Command("paysupport"), F.chat.type == "private")
@@ -190,6 +283,7 @@ async def on_successful_payment(message: Message, bot: Bot):
     switched_up = current != "free" and PLAN_RANK[plan] > PLAN_RANK[current]
 
     update = {"plan": plan, "premium_until": expiry}
+    update["payment_provider"] = "stars"
     if first or user.get("plan") != plan or not old_charge:
         update["subscription_charge_id"] = charge_id
     await cols.users.update_one({"_id": uid}, {"$set": update})

@@ -12,6 +12,12 @@ Python 3.11+ · aiogram 3 · FastAPI webhook · MongoDB (PyMongo async)
 - Build: `pip install -r requirements.txt`
 - Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 - Set the env vars from `.env.example` (RENDER_EXTERNAL_URL is picked up automatically).
+- Add your Paystack secret key as `PAYSTACK_SECRET_KEY`. Pro costs ₦7,500 and Growth ₦15,000 by default;
+  override these with `PRO_NAIRA_PRICE` and `GROWTH_NAIRA_PRICE` if needed.
+- In Paystack, set the webhook URL to `https://<your-app-domain>/paystack/webhook`. The bot verifies
+  Paystack's HMAC-SHA512 signature and activates a plan only when the verified charge matches a pending
+  transaction. Naira checkout grants 30 days and is not an automatically recurring charge; users renew
+  manually. Telegram Stars subscriptions continue to renew automatically.
 - Set `ADMIN_TELEGRAM_ID` to your numeric Telegram user ID to enable the private `/admin` panel.
   The panel shows user and plan counts and supports confirmed text/photo broadcasts with CTA links.
 - Use an always-on instance: a sleeping free instance delays or drops auto-replies.

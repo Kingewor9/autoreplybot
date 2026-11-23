@@ -111,9 +111,15 @@ def upgrade_kb() -> Markup:
     return _kb([Btn(text="💳 Upgrade", callback_data="sub")])
 
 
-def subscribe_kb(items: list[tuple[str, str]]) -> Markup:
-    """items: (button label, invoice link)"""
+def subscribe_kb(
+    items: list[tuple[str, str]], paystack_items: list[tuple[str, str]] | None = None
+) -> Markup:
+    """items: (button label, invoice link); paystack_items: (label, callback data)."""
     rows = [[Btn(text=label, url=url)] for label, url in items]
+    rows.extend(
+        [Btn(text=label, callback_data=callback_data)]
+        for label, callback_data in (paystack_items or [])
+    )
     rows.append([Btn(text="⬅️ Menu", callback_data="menu")])
     return _kb(*rows)
 

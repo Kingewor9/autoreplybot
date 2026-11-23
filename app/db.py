@@ -11,7 +11,7 @@ class Collections:
     rules: Any = None        # keyword rules per owner
     usage: Any = None        # monthly reply counters
     cooldowns: Any = None    # TTL: (rule, contact) cooldown markers
-    payments: Any = None     # Stars payment log (idempotency)
+    payments: Any = None     # payment log (idempotency)
     convs: Any = None        # one pending follow-up sequence per (connection, chat)
 
 
@@ -38,7 +38,16 @@ async def init() -> None:
         [("user_id", ASCENDING), ("month", ASCENDING)], unique=True
     )
     await cols.cooldowns.create_index("expire_at", expireAfterSeconds=0)
-    await cols.payments.create_index("telegram_payment_charge_id", unique=True)
+    await cols.payments.create_index("_id")
+    payment_indexes = await cols.payments.index_information()
+    if "telegram_payment_charge_id_1" in payment_indexes:
+        await cols.payments.drop_index("telegram_payment_charge_id_1")
+    await cols.payments.create_index(
+        "telegram_payment_charge_id",
+        unique=True,
+        partialFilterExpression={"telegram_payment_charge_id": {"$type": "string"}},
+        name="telegram_payment_charge_id_unique",
+    )
     await cols.convs.create_index("next_due_at")
     await cols.convs.create_index("notify_at")
     await cols.convs.create_index("expire_at", expireAfterSeconds=0)
