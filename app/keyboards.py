@@ -124,6 +124,14 @@ def subscribe_kb(
     return _kb(*rows)
 
 
+def paystack_checkout_kb(reference: str, amount: int, checkout_url: str) -> Markup:
+    return _kb(
+        [Btn(text=f"💳 Pay Now (₦{amount:,})", url=checkout_url)],
+        [Btn(text="✅ I've Paid", callback_data=f"payv:{reference}")],
+        [Btn(text="⬅️ Menu", callback_data="menu")],
+    )
+
+
 def rule_markup(rule: dict) -> Markup | None:
     """The link buttons attached to the auto-reply itself."""
     buttons = rule.get("buttons") or []

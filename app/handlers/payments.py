@@ -11,7 +11,7 @@ from app import keyboards as kb
 from app import services
 from app.config import PLAN_NAMES, PLAN_RANK, settings
 from app.db import cols
-from app.paystack import PaystackError, initialize_transaction
+from app.paystack import PaystackError, initialize_transaction, verify_transaction
 from app.ui import show
 
 log = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ def _naira_price(plan: str) -> int:
 
 
 def _paystack_enabled() -> bool:
-    return bool(settings.paystack_secret_key and settings.webhook_base_url)
+    return bool(settings.paystack_secret_key)
 
 
 def _paystack_items(plans: tuple[str, ...]) -> list[tuple[str, str]]:
@@ -197,7 +197,7 @@ async def cb_paystack_checkout(cb: CallbackQuery, bot: Bot):
     await cb.answer()
     plan = parts[1]
     try:
-        checkout_url = await initialize_transaction(cb.from_user.id, plan)
+        reference, checkout_url = await initialize_transaction(cb.from_user.id, plan)
     except PaystackError:
         log.exception("Could not initialize Paystack transaction for user %s", cb.from_user.id)
         await bot.send_message(
@@ -208,12 +208,74 @@ async def cb_paystack_checkout(cb: CallbackQuery, bot: Bot):
 
     await bot.send_message(
         cb.from_user.id,
-        f"Pay ₦{_naira_price(plan):,} for one month of {PLAN_NAMES[plan]} access. "
-        "Your subscription will activate after Paystack confirms payment.",
-        reply_markup=kb.subscribe_kb(
-            [(f"🇳🇬 Pay ₦{_naira_price(plan):,} with Paystack", checkout_url)]
+        f"Pay ₦{_naira_price(plan):,} for 30 days of {PLAN_NAMES[plan]} access. "
+        "After paying, return here and tap “I've Paid” to verify your transaction. "
+        "Bank transfers may take a little while to confirm.",
+        reply_markup=kb.paystack_checkout_kb(
+            reference, _naira_price(plan), checkout_url
         ),
     )
+
+
+@router.callback_query(F.data.startswith("payv:"))
+async def cb_verify_paystack_payment(cb: CallbackQuery, bot: Bot):
+    reference = (cb.data or "").partition(":")[2]
+    if len(reference) != 32 or any(char not in "0123456789abcdef" for char in reference):
+        await cb.answer("Invalid payment reference.", show_alert=True)
+        return
+
+    await cb.answer()
+    try:
+        status, payment = await verify_transaction(reference, cb.from_user.id)
+    except PaystackError:
+        log.exception("Could not verify Paystack payment for user %s", cb.from_user.id)
+        await bot.send_message(
+            cb.from_user.id,
+            "I couldn't verify that payment right now. Please try again shortly.",
+        )
+        return
+
+    if status == "pending":
+        await bot.send_message(
+            cb.from_user.id,
+            "Paystack hasn't confirmed this payment yet. If you paid by bank transfer, "
+            "wait a little and tap “I've Paid” again.",
+        )
+    elif status == "completed":
+        await bot.send_message(cb.from_user.id, "This payment has already been applied.")
+    elif payment is not None:
+        await notify_paystack_payment(bot, payment)
+
+
+async def notify_paystack_payment(
+    bot: Bot, payment: tuple[int, str, datetime, str | None]
+) -> None:
+    user_id, plan, expiry, old_charge = payment
+    cancellation_failed = False
+    if old_charge:
+        try:
+            await bot.edit_user_star_subscription(
+                user_id=user_id,
+                telegram_payment_charge_id=old_charge,
+                is_canceled=True,
+            )
+        except TelegramAPIError:
+            cancellation_failed = True
+            log.exception("Could not cancel old Stars subscription for %s", user_id)
+    renewal_note = (
+        " Please cancel your previous Telegram Stars subscription in "
+        "<b>Settings → My Stars → Subscriptions</b> to avoid another charge."
+        if cancellation_failed
+        else ""
+    )
+    try:
+        await bot.send_message(
+            user_id,
+            f"🎉 Paystack payment received! Your {PLAN_NAMES[plan]} plan is active until "
+            f"<b>{expiry:%d %b %Y}</b>.{renewal_note}",
+        )
+    except TelegramAPIError:
+        log.exception("Could not notify user %s about Paystack payment", user_id)
 
 
 @router.message(Command("paysupport"), F.chat.type == "private")

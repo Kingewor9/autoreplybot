@@ -8,15 +8,17 @@ from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("BOT_TOKEN", "test-token")
 os.environ.setdefault("MONGODB_URI", "mongodb://localhost/test")
+os.environ.setdefault("PAYSTACK_SECRET_KEY", "test-secret")
 
 from app.paystack import (
     PaystackWebhookError,
     handle_webhook_event,
     verify_webhook_signature,
+    verify_transaction,
 )
 
 
-class PaystackWebhookTests(unittest.IsolatedAsyncioTestCase):
+class PaystackPaymentTests(unittest.IsolatedAsyncioTestCase):
     def test_signature_verification(self):
         body = b'{"event":"charge.success"}'
         secret = "test-secret"
@@ -69,6 +71,62 @@ class PaystackWebhookTests(unittest.IsolatedAsyncioTestCase):
         ):
             self.assertIsNone(await handle_webhook_event(event))
             users.update_one.assert_not_awaited()
+
+    async def test_i_have_paid_checks_paystack_and_leaves_pending_charge_unmodified(self):
+        reference = "0123456789abcdef0123456789abcdef"
+        payment = {
+            "_id": reference,
+            "provider": "paystack",
+            "user_id": 123,
+            "status": "initialized",
+        }
+
+        class FakeResponse:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_value, traceback):
+                self.exit_args = (exc_type, exc_value, traceback)
+                return None
+
+            def raise_for_status(self):
+                return None
+
+            async def json(self):
+                return {
+                    "status": True,
+                    "data": {"reference": reference, "status": "pending"},
+                }
+
+        class FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_value, traceback):
+                self.exit_args = (exc_type, exc_value, traceback)
+                return None
+
+            def request(self, method, url, **kwargs):
+                self.method = method
+                self.url = url
+                self.authorization = kwargs["headers"]["Authorization"]
+                return FakeResponse()
+
+        session = FakeSession()
+        payments = SimpleNamespace(find_one=AsyncMock(return_value=payment))
+        with patch("app.paystack.cols.payments", payments), patch(
+            "app.paystack.aiohttp.ClientSession", return_value=session
+        ):
+            status, activated = await verify_transaction(reference, 123)
+
+        self.assertEqual(status, "pending")
+        self.assertIsNone(activated)
+        self.assertEqual(session.method, "GET")
+        self.assertTrue(session.authorization.startswith("Bearer "))
+        self.assertEqual(
+            session.url,
+            f"https://api.paystack.co/transaction/verify/{reference}",
+        )
 
     async def test_processing_retry_grants_only_one_month(self):
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)

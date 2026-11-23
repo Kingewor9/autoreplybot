@@ -3,7 +3,6 @@ import json
 import logging
 from contextlib import asynccontextmanager
 
-from aiogram.exceptions import TelegramAPIError
 from aiogram.types import Update
 from fastapi import FastAPI, Header, HTTPException, Request
 
@@ -11,6 +10,7 @@ from app import db
 from app.bot import COMMANDS, bot, dp
 from app.config import settings
 from app.followups import run_followup_worker
+from app.handlers.payments import notify_paystack_payment
 from app.paystack import (
     PaystackWebhookError,
     handle_webhook_event,
@@ -90,30 +90,5 @@ async def paystack_webhook(request: Request):
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     if payment is not None:
-        user_id, plan, expiry, old_charge = payment
-        cancellation_failed = False
-        if old_charge:
-            try:
-                await bot.edit_user_star_subscription(
-                    user_id=user_id,
-                    telegram_payment_charge_id=old_charge,
-                    is_canceled=True,
-                )
-            except TelegramAPIError:
-                cancellation_failed = True
-                log.exception("Could not cancel old Stars subscription for %s", user_id)
-        renewal_note = (
-            " Please cancel your previous Telegram Stars subscription in "
-            "<b>Settings → My Stars → Subscriptions</b> to avoid another charge."
-            if cancellation_failed
-            else ""
-        )
-        try:
-            await bot.send_message(
-                user_id,
-                f"🎉 Paystack payment received! Your {plan.title()} plan is active until "
-                f"<b>{expiry:%d %b %Y}</b>.{renewal_note}",
-            )
-        except TelegramAPIError:
-            log.exception("Could not notify user %s about Paystack payment", user_id)
+        await notify_paystack_payment(bot, payment)
     return {"ok": True}

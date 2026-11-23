@@ -3,7 +3,7 @@ import hmac
 import logging
 import uuid
 from datetime import datetime, timedelta
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import aiohttp
 from pymongo import ReturnDocument
@@ -14,7 +14,7 @@ from app.db import cols
 
 log = logging.getLogger(__name__)
 
-PAYSTACK_API_URL = "https://api.paystack.co/transaction/initialize"
+PAYSTACK_TRANSACTION_URL = "https://api.paystack.co/transaction"
 PLAN_NAIRA_PRICES = {
     "pro": settings.pro_naira_price,
     "growth": settings.growth_naira_price,
@@ -22,11 +22,11 @@ PLAN_NAIRA_PRICES = {
 
 
 class PaystackError(Exception):
-    """Paystack could not initialize a checkout transaction."""
+    """A Paystack request or transaction verification failed."""
 
 
-class PaystackWebhookError(ValueError):
-    """A signed Paystack webhook did not match a pending transaction."""
+class PaystackWebhookError(PaystackError):
+    """A Paystack charge did not match a pending transaction."""
 
 
 def verify_webhook_signature(body: bytes, signature: str, secret: str) -> bool:
@@ -36,7 +36,7 @@ def verify_webhook_signature(body: bytes, signature: str, secret: str) -> bool:
     return hmac.compare_digest(signature, expected)
 
 
-async def initialize_transaction(user_id: int, plan: str) -> str:
+async def initialize_transaction(user_id: int, plan: str) -> tuple[str, str]:
     if plan not in PLAN_NAIRA_PRICES:
         raise PaystackError("Unknown subscription plan.")
     if not settings.paystack_secret_key:
@@ -65,21 +65,15 @@ async def initialize_transaction(user_id: int, plan: str) -> str:
     }
 
     try:
-        timeout = aiohttp.ClientTimeout(total=20)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(
-                PAYSTACK_API_URL,
-                json=payload,
-                headers={"Authorization": f"Bearer {settings.paystack_secret_key}"},
-            ) as response:
-                response.raise_for_status()
-                result = await response.json()
-    except (aiohttp.ClientError, TimeoutError, ValueError) as e:
+        result = await _request_paystack(
+            "POST", f"{PAYSTACK_TRANSACTION_URL}/initialize", json_body=payload
+        )
+    except PaystackError:
         await cols.payments.update_one(
             {"_id": reference, "status": "initializing"},
             {"$set": {"status": "initialization_failed"}},
         )
-        raise PaystackError("Paystack transaction initialization failed.") from e
+        raise
 
     data = result.get("data") if isinstance(result, dict) else None
     checkout_url = data.get("authorization_url") if isinstance(data, dict) else None
@@ -103,7 +97,59 @@ async def initialize_transaction(user_id: int, plan: str) -> str:
         {"_id": reference, "status": "initializing"},
         {"$set": {"status": "initialized", "authorization_url": checkout_url}},
     )
-    return checkout_url
+    return reference, checkout_url
+
+
+async def _request_paystack(method: str, url: str, json_body: dict | None = None) -> dict:
+    try:
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.request(
+                method,
+                url,
+                json=json_body,
+                headers={"Authorization": f"Bearer {settings.paystack_secret_key}"},
+            ) as response:
+                response.raise_for_status()
+                result = await response.json()
+    except (aiohttp.ClientError, TimeoutError, ValueError) as e:
+        raise PaystackError("Paystack API request failed.") from e
+    if not isinstance(result, dict):
+        raise PaystackError("Paystack returned an invalid response.")
+    return result
+
+
+async def verify_transaction(
+    reference: str, user_id: int
+) -> tuple[str, tuple[int, str, datetime, str | None] | None]:
+    if not settings.paystack_secret_key:
+        raise PaystackError("Paystack is not configured.")
+
+    payment = await cols.payments.find_one(
+        {"_id": reference, "provider": "paystack", "user_id": user_id}
+    )
+    if payment is None:
+        raise PaystackError("No matching payment was found for this account.")
+    if payment.get("status") == "completed":
+        return "completed", None
+    if payment.get("status") not in ("initializing", "initialized", "processing"):
+        raise PaystackError("This checkout is no longer available.")
+
+    result = await _request_paystack(
+        "GET", f"{PAYSTACK_TRANSACTION_URL}/verify/{quote(reference, safe='')}"
+    )
+    data = result.get("data")
+    if result.get("status") is not True or not isinstance(data, dict):
+        raise PaystackError("Paystack could not verify this transaction.")
+    if data.get("reference") != reference:
+        raise PaystackError("Paystack returned a different transaction reference.")
+    if data.get("status") != "success":
+        return "pending", None
+
+    activated = await handle_successful_charge(data)
+    if activated is None:
+        return "completed", None
+    return "success", activated
 
 
 async def handle_webhook_event(
@@ -113,9 +159,14 @@ async def handle_webhook_event(
         return None
 
     data = event.get("data")
-    if not isinstance(data, dict) or data.get("status") != "success":
+    if not isinstance(data, dict):
         raise PaystackWebhookError("Invalid successful charge event.")
+    return await handle_successful_charge(data)
 
+
+async def handle_successful_charge(data: dict) -> tuple[int, str, datetime, str | None] | None:
+    if data.get("status") != "success":
+        raise PaystackWebhookError("Transaction has not succeeded.")
     reference = data.get("reference")
     if not isinstance(reference, str) or not reference:
         raise PaystackWebhookError("Missing transaction reference.")
