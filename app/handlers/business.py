@@ -1,4 +1,5 @@
 import logging
+from html import escape
 
 from aiogram import Bot, Router
 from aiogram.exceptions import TelegramAPIError
@@ -67,6 +68,24 @@ async def on_business_connection(conn: BusinessConnection, bot: Bot):
             )
     except TelegramAPIError as e:
         log.warning("Could not notify %s about connection change: %s", conn.user.id, e)
+
+    if now_active and not was_active and settings.admin_telegram_id:
+        user_name = escape(conn.user.full_name)
+        username = f" (@{escape(conn.user.username)})" if conn.user.username else ""
+        try:
+            await bot.send_message(
+                settings.admin_telegram_id,
+                "🔗 <b>New Telegram Business connection</b>\n\n"
+                f"User: <b>{user_name}</b>{username}\n"
+                f"Telegram ID: <code>{conn.user.id}</code>",
+            )
+        except TelegramAPIError as e:
+            log.warning(
+                "Could not notify admin %s about connection from %s: %s",
+                settings.admin_telegram_id,
+                conn.user.id,
+                e,
+            )
 
 
 async def _notify_owner(bot: Bot, owner_id: int, notice: str, count: int) -> None:

@@ -20,7 +20,8 @@ Python 3.11+ · aiogram 3 · FastAPI webhook · MongoDB (PyMongo async)
   renew manually. Telegram Stars subscriptions continue to renew automatically.
 - If you deploy the FastAPI app with a public URL, you can optionally configure Paystack's webhook URL
   as `https://<your-app-domain>/paystack/webhook`; webhook signatures and transaction details are verified.
-- Set `ADMIN_TELEGRAM_ID` to your numeric Telegram user ID to enable the private `/admin` panel.
+- Set `ADMIN_TELEGRAM_ID` to your numeric Telegram user ID to enable the private `/admin` panel
+  and receive a notification whenever a user successfully connects their Telegram Business account.
   The panel shows user and plan counts and supports confirmed text/photo broadcasts with CTA links.
 - Use an always-on instance: a sleeping free instance delays or drops auto-replies.
 
