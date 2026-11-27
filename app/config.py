@@ -40,6 +40,9 @@ class Settings:
     support_contact: str
     growth_price: int
     growth_rule_limit: int
+    gemini_api_key: str
+    gemini_model: str
+    faq_monthly_request_limit: int
     followup_max_steps: int
     followup_min_minutes: int
     followup_max_total_minutes: int
@@ -73,6 +76,9 @@ def load_settings() -> Settings:
         support_contact=os.getenv("SUPPORT_CONTACT", "the bot owner"),
         growth_price=_int("STARS_PRICE_GROWTH", 500),
         growth_rule_limit=_int("GROWTH_RULE_LIMIT", 20),
+        gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
+        gemini_model=os.getenv("GEMINI_MODEL", "").strip() or "gemini-2.5-flash",
+        faq_monthly_request_limit=_int("FAQ_MONTHLY_REQUEST_LIMIT", 1500),
         followup_max_steps=_int("FOLLOWUP_MAX_STEPS", 3),
         followup_min_minutes=_int("FOLLOWUP_MIN_MINUTES", 5),
         # Telegram only allows replies within 24h of the contact's last message; keep 1h of margin

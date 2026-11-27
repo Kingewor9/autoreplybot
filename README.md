@@ -23,6 +23,12 @@ Python 3.11+ · aiogram 3 · FastAPI webhook · MongoDB (PyMongo async)
 - Set `ADMIN_TELEGRAM_ID` to your numeric Telegram user ID to enable the private `/admin` panel
   and receive a notification whenever a user successfully connects their Telegram Business account.
   The panel shows user and plan counts and supports confirmed text/photo broadcasts with CTA links.
+- Smart FAQ is available on every plan. Configure `GEMINI_API_KEY` (Google AI Studio) to enable
+  AI answers; users can save up to 3,000 characters of business information and turn replies on/off
+  from the bot menu. Keyword rules always take priority, and the model is instructed to stay silent
+  when the saved information does not answer a customer's question. `FAQ_MONTHLY_REQUEST_LIMIT`
+  defaults to 1,500 AI checks per user/month (including requests that return IGNORE). FAQ replies
+  also use the existing monthly auto-reply allowance on the Free plan.
 - Use an always-on instance: a sleeping free instance delays or drops auto-replies.
 
 ## BotFather setup

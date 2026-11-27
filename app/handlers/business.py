@@ -1,3 +1,4 @@
+import html
 import logging
 from html import escape
 
@@ -6,7 +7,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import BusinessConnection, Message
 from pymongo import ReturnDocument
 
-from app import services
+from app import ai_faq, services
 from app.config import settings
 from app.db import cols
 from app.handlers.common import BUSINESS_PATH
@@ -140,6 +141,40 @@ async def on_business_message(message: Message, bot: Bot):
     active = rules[: services.rule_limit(owner)]  # downgraded users: only the first N are live
     rule = services.find_match(active, text)
     if not rule:
+        faq_text = owner.get("faq_text") or ""
+        if not owner.get("faq_enabled") or not faq_text:
+            return
+        reply_limit = services.reply_limit(owner)
+        if reply_limit is not None and await services.get_usage(owner_id) >= reply_limit:
+            return
+        if not await services.consume_faq_request(owner_id):
+            return
+        try:
+            answer = await ai_faq.answer(faq_text, text)
+        except ai_faq.SmartFaqError as e:
+            log.warning("Smart FAQ failed for owner %s: %s", owner_id, e)
+            return
+        if answer is None:
+            return
+
+        allowed, notice, count = await services.consume_reply(owner)
+        if not allowed:
+            return
+        reply = html.escape(answer)
+        if not services.is_paid(owner):
+            reply += "\n\nAuto-replied via @Cuezabot"
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=reply,
+                business_connection_id=conn_id,
+            )
+        except TelegramAPIError as e:
+            log.warning("Smart FAQ reply failed for owner %s: %s", owner_id, e)
+            await services.refund_reply(owner_id)
+            return
+        if notice:
+            await _notify_owner(bot, owner_id, notice, count)
         return
 
     rule_id = str(rule["_id"])

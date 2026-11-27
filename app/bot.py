@@ -4,7 +4,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 
 from app.config import settings
-from app.handlers import admin, business, common, followups_ui, payments, rules
+from app.handlers import admin, business, common, faq, followups_ui, payments, rules
 
 bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
@@ -14,6 +14,7 @@ dp.include_router(common.router)
 dp.include_router(admin.router)
 dp.include_router(payments.router)
 dp.include_router(business.router)
+dp.include_router(faq.router)
 dp.include_router(followups_ui.router)
 dp.include_router(rules.router)
 

@@ -14,7 +14,31 @@ def main_menu() -> Markup:
     return _kb(
         [Btn(text="➕ Add New Rule", callback_data="add")],
         [Btn(text="📋 My Rules", callback_data="rules")],
+        [Btn(text="🧠 Smart FAQ (AI)", callback_data="faq")],
         [Btn(text="💳 Subscription / Upgrade", callback_data="sub")],
+    )
+
+
+def faq_menu(enabled: bool, has_text: bool) -> Markup:
+    rows = [[Btn(text="✏️ Edit business info", callback_data="faq:edit")]]
+    if has_text:
+        rows.append(
+            [
+                Btn(
+                    text="🟢 Smart FAQ: ON" if enabled else "🔴 Smart FAQ: OFF",
+                    callback_data="faq:toggle",
+                )
+            ]
+        )
+        rows.append([Btn(text="🗑 Clear business info", callback_data="faq:clear")])
+    rows.append([Btn(text="⬅️ Menu", callback_data="menu")])
+    return _kb(*rows)
+
+
+def faq_clear_kb() -> Markup:
+    return _kb(
+        [Btn(text="🗑 Yes, clear it", callback_data="faq:clear_yes")],
+        [Btn(text="↩️ Keep it", callback_data="faq")],
     )
 
 

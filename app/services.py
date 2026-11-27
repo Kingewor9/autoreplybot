@@ -199,6 +199,34 @@ async def get_usage(user_id: int) -> int:
     return doc["count"] if doc else 0
 
 
+async def consume_faq_request(user_id: int) -> bool:
+    """Atomically use one monthly Smart FAQ request allowance."""
+    month = month_key()
+    try:
+        await cols.usage.update_one(
+            {"user_id": user_id, "month": month},
+            {"$setOnInsert": {"faq_count": 0}},
+            upsert=True,
+        )
+    except DuplicateKeyError:
+        pass
+
+    await cols.usage.update_one(
+        {"user_id": user_id, "month": month, "faq_count": {"$exists": False}},
+        {"$set": {"faq_count": 0}},
+    )
+    doc = await cols.usage.find_one_and_update(
+        {
+            "user_id": user_id,
+            "month": month,
+            "faq_count": {"$lt": settings.faq_monthly_request_limit},
+        },
+        {"$inc": {"faq_count": 1}},
+        return_document=ReturnDocument.AFTER,
+    )
+    return doc is not None
+
+
 async def _flag_once(user_id: int, month: str, flag: str) -> bool:
     res = await cols.usage.update_one(
         {"user_id": user_id, "month": month, flag: False}, {"$set": {flag: True}}
